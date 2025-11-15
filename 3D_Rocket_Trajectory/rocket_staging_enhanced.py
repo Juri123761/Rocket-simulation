@@ -82,11 +82,16 @@ def ISA_atmosphere(h):
         p = p_h20 * (T / 216.65)**(-g0 / (0.001 * R_gas))
     elif h < 47000:
         T = 228.65
-        p_h32 = ISA_atmosphere(31999)[1]
+        T_h32 = 216.65 + 0.001 * 12000
+        p_h20_at_32 = p0 * (216.65 / T0)**5.256 * np.exp(-9000 / 6341.62)
+        p_h32 = p_h20_at_32 * (T_h32 / 216.65)**(-g0 / (0.001 * R_gas))
         p = p_h32 * np.exp(-(h - 32000) / 7000)
     else:
         T = 228.65 + 0.0028 * (h - 47000)
-        p_h47 = ISA_atmosphere(46999)[1]
+        T_h32 = 216.65 + 0.001 * 12000
+        p_h20_at_32 = p0 * (216.65 / T0)**5.256 * np.exp(-9000 / 6341.62)
+        p_h32 = p_h20_at_32 * (T_h32 / 216.65)**(-g0 / (0.001 * R_gas))
+        p_h47 = p_h32 * np.exp(-15000 / 7000)
         p = p_h47 * np.exp(-(h - 47000) / 6000)
     
     rho = p / (R_gas * T)
@@ -105,8 +110,10 @@ def get_current_stage(t):
 def derivatives(state, t):
     x, y, z, vx, vy, vz, m = state
     
-    if m < payload_mass:
-        m = payload_mass
+    stage_idx, _ = get_current_stage(t)
+    min_mass = payload_mass + sum([stages[j]['dry_mass'] for j in range(stage_idx, len(stages))])
+    if m < min_mass:
+        m = min_mass
     
     v_vec = np.array([vx, vy, vz])
     v = np.linalg.norm(v_vec)
@@ -115,7 +122,8 @@ def derivatives(state, t):
     stage = stages[stage_idx]
     
     thrust_mag = 0.0
-    if 0 <= time_in_stage <= stage['burn_time']:
+    prop_remaining = m - (payload_mass + sum([stages[j]['dry_mass'] for j in range(stage_idx, len(stages))]))
+    if prop_remaining > 0.01 and 0 <= time_in_stage < stage['burn_time']:
         thrust_mag = stage['thrust']
     
     pitch_rad = np.deg2rad(pitch_deg_stage[stage_idx])
@@ -141,6 +149,8 @@ def derivatives(state, t):
     
     if thrust_mag > 0:
         dm_dt = -thrust_mag / (stage['Isp'] * g0)
+        if m + dm_dt * dt < min_mass:
+            dm_dt = (min_mass - m) / dt
     else:
         dm_dt = 0.0
     
@@ -211,11 +221,13 @@ for step in range(num_steps):
     stage_info.append(stage_idx)
     
     if step > 0:
-        for i in range(len(stages)):
-            if abs(t - cumulative_times[i+1]) < dt/2 and i < len(stages) - 1:
-                state[6] = stage_masses_after[i]
-                print(f"  STAGE {i+1} SEPARATED at t={t:.2f}s, Height={state[2]/1000:.2f}km")
-                print(f"    New mass: {state[6]:.0f} kg, Stage {i+2} activated")
+        for i in range(len(stages) - 1):
+            separation_time = cumulative_times[i+1]
+            if separation_time - dt/2 <= t < separation_time + dt/2:
+                if state[6] > stage_masses_after[i]:
+                    state[6] = stage_masses_after[i]
+                    print(f"  STAGE {i+1} SEPARATED at t={t:.2f}s, Height={state[2]/1000:.2f}km")
+                    print(f"    New mass: {state[6]:.0f} kg, Stage {i+2} activated")
     
     if step > 100 and state[2] < 0:
         print(f"  Ground contact at t={t:.1f}s")
@@ -388,7 +400,7 @@ ax11.legend()
 ax11.grid(True, alpha=0.3)
 
 ax12 = fig.add_subplot(3, 4, 12)
-potential_energy = ms * g0 * zs / 1e9
+potential_energy = ms * gs * zs / 1e9
 kinetic_energy = 0.5 * ms * speeds**2 / 1e9
 total_energy = potential_energy + kinetic_energy
 ax12.plot(times, potential_energy, 'g-', linewidth=1.5, label='Potential')

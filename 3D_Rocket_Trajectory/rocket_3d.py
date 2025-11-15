@@ -62,7 +62,7 @@ def derivatives(state, t):
     
     prop_remaining = m - dry_mass
     thrust_mag = 0.0
-    if prop_remaining > 0.01 and t <= burn_time:
+    if prop_remaining > 0.01 and t < burn_time:
         thrust_mag = thrust
     
     T_vec = thrust_mag * thrust_direction
@@ -77,7 +77,7 @@ def derivatives(state, t):
     g_vec = np.array([0.0, 0.0, -g0])
     a_vec = (T_vec + D_vec) / m + g_vec
     
-    dm_dt = -thrust_mag / (Isp * g0) if prop_remaining > 0.01 and t <= burn_time else 0.0
+    dm_dt = -thrust_mag / (Isp * g0) if prop_remaining > 0.01 and t < burn_time else 0.0
     
     return np.array([vx, vy, vz, a_vec[0], a_vec[1], a_vec[2], dm_dt])
 
