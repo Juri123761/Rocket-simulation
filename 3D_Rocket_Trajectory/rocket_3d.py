@@ -1,7 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import plotly.graph_objects as go
+try:
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
 
 g0 = 9.80665
 rho0 = 1.225
@@ -229,63 +233,67 @@ plt.tight_layout()
 plt.savefig('rocket_3d_trajectory.png', dpi=150)
 plt.show()
 
-print("\nCreating interactive 3D visualization...")
-
-if len(xs) == 0 or len(zs) == 0:
-    raise RuntimeError("Cannot create visualization: no trajectory data")
-max_x = np.max(np.abs(xs)) if len(xs) > 0 else 5
-max_z = np.max(np.abs(zs)) if len(zs) > 0 else 5
-max_range = max(max_x, max_z, 5) / 1000
-
-fig_plotly = go.Figure(data=go.Scatter3d(
-    x=xs/1000,
-    y=ys/1000,
-    z=zs/1000,
-    mode='lines+markers',
-    marker=dict(
-        size=2,
-        color=speeds,
-        colorscale='Viridis',
-        showscale=True,
-        colorbar=dict(title="Velocity (m/s)")
-    ),
-    line=dict(color='blue', width=3),
-    hovertemplate='X: %{x:.2f} km<br>Y: %{y:.2f} km<br>Z: %{z:.2f} km<extra></extra>',
-    name='Trajectory'
-))
-
-fig_plotly.add_scatter3d(x=[xs[0]/1000], y=[ys[0]/1000], z=[zs[0]/1000],
-                         mode='markers', marker=dict(size=20, color='lime', symbol='circle'),
-                         name='START: (0, 0, 0)')
-
-fig_plotly.add_scatter3d(x=[xs[burn_idx]/1000], y=[ys[burn_idx]/1000], z=[zs[burn_idx]/1000],
-                         mode='markers', marker=dict(size=15, color='red', symbol='square'),
-                         name=f'Burn End ({xs[burn_idx]/1000:.2f}, {ys[burn_idx]/1000:.2f}, {zs[burn_idx]/1000:.2f}) km')
-
-apogee_idx = np.argmax(zs)
-fig_plotly.add_scatter3d(x=[xs[apogee_idx]/1000], y=[ys[apogee_idx]/1000], z=[zs[apogee_idx]/1000],
-                         mode='markers', marker=dict(size=15, color='orange', symbol='x'),
-                         name=f'Apogee ({zs[apogee_idx]/1000:.2f} km)')
-
-fig_plotly.update_layout(
-    title='3D Rocket Trajectory - Start at (0, 0, 0)',
-    scene=dict(
-        xaxis_title='X Position (km)',
-        yaxis_title='Y Position (km)',
-        zaxis_title='Z Position (km) - Height',
-        aspectmode='data',
-        bgcolor='lightgray',
-        xaxis=dict(gridcolor='white', showspikes=False, zeroline=True, zerolinecolor='black'),
-        yaxis=dict(gridcolor='white', showspikes=False, zeroline=True, zerolinecolor='black'),
-        zaxis=dict(gridcolor='white', showspikes=False, zeroline=True, zerolinecolor='black'),
-        camera=dict(
-            eye=dict(x=1.5, y=1.5, z=1.5),
-            center=dict(x=0, y=0, z=50)
-        )
-    ),
-    width=1200,
-    height=900
-)
-
-fig_plotly.write_html('rocket_3d_interactive.html')
-print("Interactive visualization saved as: rocket_3d_interactive.html")
+if PLOTLY_AVAILABLE:
+    print("\nCreating interactive 3D visualization...")
+    
+    if len(xs) == 0 or len(zs) == 0:
+        raise RuntimeError("Cannot create visualization: no trajectory data")
+    max_x = np.max(np.abs(xs)) if len(xs) > 0 else 5
+    max_z = np.max(np.abs(zs)) if len(zs) > 0 else 5
+    max_range = max(max_x, max_z, 5) / 1000
+    
+    fig_plotly = go.Figure(data=go.Scatter3d(
+        x=xs/1000,
+        y=ys/1000,
+        z=zs/1000,
+        mode='lines+markers',
+        marker=dict(
+            size=2,
+            color=speeds,
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title="Velocity (m/s)")
+        ),
+        line=dict(color='blue', width=3),
+        hovertemplate='X: %{x:.2f} km<br>Y: %{y:.2f} km<br>Z: %{z:.2f} km<extra></extra>',
+        name='Trajectory'
+    ))
+    
+    fig_plotly.add_scatter3d(x=[xs[0]/1000], y=[ys[0]/1000], z=[zs[0]/1000],
+                             mode='markers', marker=dict(size=20, color='lime', symbol='circle'),
+                             name='START: (0, 0, 0)')
+    
+    fig_plotly.add_scatter3d(x=[xs[burn_idx]/1000], y=[ys[burn_idx]/1000], z=[zs[burn_idx]/1000],
+                             mode='markers', marker=dict(size=15, color='red', symbol='square'),
+                             name=f'Burn End ({xs[burn_idx]/1000:.2f}, {ys[burn_idx]/1000:.2f}, {zs[burn_idx]/1000:.2f}) km')
+    
+    apogee_idx = np.argmax(zs)
+    fig_plotly.add_scatter3d(x=[xs[apogee_idx]/1000], y=[ys[apogee_idx]/1000], z=[zs[apogee_idx]/1000],
+                             mode='markers', marker=dict(size=15, color='orange', symbol='x'),
+                             name=f'Apogee ({zs[apogee_idx]/1000:.2f} km)')
+    
+    fig_plotly.update_layout(
+        title='3D Rocket Trajectory - Start at (0, 0, 0)',
+        scene=dict(
+            xaxis_title='X Position (km)',
+            yaxis_title='Y Position (km)',
+            zaxis_title='Z Position (km) - Height',
+            aspectmode='data',
+            bgcolor='lightgray',
+            xaxis=dict(gridcolor='white', showspikes=False, zeroline=True, zerolinecolor='black'),
+            yaxis=dict(gridcolor='white', showspikes=False, zeroline=True, zerolinecolor='black'),
+            zaxis=dict(gridcolor='white', showspikes=False, zeroline=True, zerolinecolor='black'),
+            camera=dict(
+                eye=dict(x=1.5, y=1.5, z=1.5),
+                center=dict(x=0, y=0, z=50)
+            )
+        ),
+        width=1200,
+        height=900
+    )
+    
+    fig_plotly.write_html('rocket_3d_interactive.html')
+    print("Interactive visualization saved as: rocket_3d_interactive.html")
+else:
+    print("\nNote: Plotly not available. Skipping interactive 3D visualization.")
+    print("Install plotly with: pip install plotly")

@@ -427,7 +427,8 @@ ax12.set_title('Energy vs Time')
 ax12.legend()
 ax12.grid(True, alpha=0.3)
 
-plt.tight_layout()
+plt.tight_layout(rect=[0, 0.03, 1, 0.98])
+plt.subplots_adjust(hspace=0.4, wspace=0.3, top=0.96, bottom=0.05)
 plt.savefig('rocket_staging_enhanced.png', dpi=150, bbox_inches='tight')
 plt.show()
 
