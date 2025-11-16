@@ -24,7 +24,13 @@ yaw_deg = 0.0
 
 cumulative_times = [0.0]
 for stage in stages:
+    if stage['Isp'] <= 0:
+        raise ValueError(f"Isp must be positive for {stage['name']}")
+    if stage['thrust'] <= 0:
+        raise ValueError(f"Thrust must be positive for {stage['name']}")
     mass_flow_rate = stage['thrust'] / (stage['Isp'] * g0)
+    if mass_flow_rate <= 0:
+        raise ValueError(f"Mass flow rate must be positive for {stage['name']}")
     stage['burn_time'] = stage['prop_mass'] / mass_flow_rate
     stage['mass_flow_rate'] = mass_flow_rate
     cumulative_times.append(cumulative_times[-1] + stage['burn_time'])
@@ -107,22 +113,24 @@ def get_current_stage(t):
             return i, t - cumulative_times[i]
     return len(stages) - 1, t - cumulative_times[-1]
 
-def derivatives(state, t):
+def derivatives(state, t, dt_step):
     x, y, z, vx, vy, vz, m = state
     
-    stage_idx, _ = get_current_stage(t)
+    stage_idx, time_in_stage = get_current_stage(t)
+    stage = stages[stage_idx]
     min_mass = payload_mass + sum([stages[j]['dry_mass'] for j in range(stage_idx, len(stages))])
+    
     if m < min_mass:
         m = min_mass
+    
+    if m <= 0:
+        raise RuntimeError(f"Mass became non-positive: m={m} at t={t:.2f}s, stage={stage_idx}")
     
     v_vec = np.array([vx, vy, vz])
     v = np.linalg.norm(v_vec)
     
-    stage_idx, time_in_stage = get_current_stage(t)
-    stage = stages[stage_idx]
-    
     thrust_mag = 0.0
-    prop_remaining = m - (payload_mass + sum([stages[j]['dry_mass'] for j in range(stage_idx, len(stages))]))
+    prop_remaining = m - min_mass
     if prop_remaining > 0.01 and 0 <= time_in_stage < stage['burn_time']:
         thrust_mag = stage['thrust']
     
@@ -147,20 +155,20 @@ def derivatives(state, t):
     g = gravitational_acceleration(z)
     a_vec = (T_vec + D_vec) / m + np.array([0.0, 0.0, -g])
     
-    if thrust_mag > 0:
+    if thrust_mag > 0 and stage['Isp'] > 0:
         dm_dt = -thrust_mag / (stage['Isp'] * g0)
-        if m + dm_dt * dt < min_mass:
-            dm_dt = (min_mass - m) / dt
+        if dt_step > 0 and m + dm_dt * dt_step < min_mass:
+            dm_dt = (min_mass - m) / dt_step
     else:
         dm_dt = 0.0
     
     return np.array([vx, vy, vz, a_vec[0], a_vec[1], a_vec[2], dm_dt])
 
 def rk4_step(state, t, dt):
-    k1 = derivatives(state, t)
-    k2 = derivatives(state + 0.5 * dt * k1, t + 0.5 * dt)
-    k3 = derivatives(state + 0.5 * dt * k2, t + 0.5 * dt)
-    k4 = derivatives(state + dt * k3, t + dt)
+    k1 = derivatives(state, t, dt)
+    k2 = derivatives(state + 0.5 * dt * k1, t + 0.5 * dt, dt)
+    k3 = derivatives(state + 0.5 * dt * k2, t + 0.5 * dt, dt)
+    k4 = derivatives(state + dt * k3, t + dt, dt)
     return state + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
 
 total_mass = sum([s['dry_mass'] + s['prop_mass'] for s in stages]) + payload_mass
@@ -237,7 +245,8 @@ for step in range(num_steps):
     t += dt
     
     if step % 1000 == 0:
-        print(f"  t={t:.1f}s, h={state[2]/1000:.2f}km, v={v:.0f}m/s, m={state[6]:.0f}kg, Stage={stage_idx+1}")
+        current_stage_idx, _ = get_current_stage(t)
+        print(f"  t={t:.1f}s, h={state[2]/1000:.2f}km, v={v:.0f}m/s, m={state[6]:.0f}kg, Stage={current_stage_idx+1}")
 
 print("\nSimulation complete!")
 
@@ -259,9 +268,11 @@ print("="*80)
 cum_time = 0.0
 for i, stage in enumerate(stages):
     burn_time = stage['burn_time']
+    if len(times) == 0:
+        continue
     burn_end_idx = np.argmin(np.abs(times - (cum_time + burn_time)))
     
-    if burn_end_idx < len(zs):
+    if burn_end_idx < len(zs) and burn_end_idx < len(speeds) and burn_end_idx < len(ms):
         print(f"\n{stage['name']}:")
         print(f"  Burn duration: {burn_time:.1f}s ({cum_time:.1f}s - {cum_time + burn_time:.1f}s)")
         print(f"  At burn end:")
@@ -272,12 +283,16 @@ for i, stage in enumerate(stages):
         print(f"    Wind: {winds[burn_end_idx]:.1f} m/s")
     cum_time += burn_time
 
+if len(zs) == 0:
+    raise RuntimeError("Simulation produced no data points")
 apogee_idx = np.argmax(zs)
 print(f"\nApogee:")
 print(f"  Max height: {zs[apogee_idx]/1000:.2f} km")
 print(f"  Time: {times[apogee_idx]:.1f} s")
-print(f"  Velocity: {speeds[apogee_idx]:.0f} m/s")
-print(f"  Horizontal range: {np.sqrt(xs[apogee_idx]**2 + ys[apogee_idx]**2)/1000:.2f} km")
+if apogee_idx < len(speeds):
+    print(f"  Velocity: {speeds[apogee_idx]:.0f} m/s")
+if apogee_idx < len(xs) and apogee_idx < len(ys):
+    print(f"  Horizontal range: {np.sqrt(xs[apogee_idx]**2 + ys[apogee_idx]**2)/1000:.2f} km")
 print("="*80)
 
 fig = plt.figure(figsize=(20, 14))

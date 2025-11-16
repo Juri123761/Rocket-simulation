@@ -24,7 +24,13 @@ T_x = np.cos(pitch_rad) * np.cos(yaw_rad)
 T_y = np.cos(pitch_rad) * np.sin(yaw_rad)
 thrust_direction = np.array([T_x, T_y, T_z])
 
+if Isp <= 0:
+    raise ValueError("Isp must be positive")
+if thrust <= 0:
+    raise ValueError("Thrust must be positive")
 mass_flow_rate = thrust / (Isp * g0)
+if mass_flow_rate <= 0:
+    raise ValueError("Mass flow rate must be positive")
 burn_time = prop_mass / mass_flow_rate
 
 total_mass = dry_mass + prop_mass
@@ -57,6 +63,9 @@ def derivatives(state, t):
     if m < dry_mass:
         m = dry_mass
     
+    if m <= 0:
+        raise RuntimeError(f"Mass became non-positive: m={m}")
+    
     v_vec = np.array([vx, vy, vz])
     v = np.linalg.norm(v_vec)
     
@@ -77,7 +86,7 @@ def derivatives(state, t):
     g_vec = np.array([0.0, 0.0, -g0])
     a_vec = (T_vec + D_vec) / m + g_vec
     
-    dm_dt = -thrust_mag / (Isp * g0) if prop_remaining > 0.01 and t < burn_time else 0.0
+    dm_dt = -thrust_mag / (Isp * g0) if (Isp > 0 and prop_remaining > 0.01 and t < burn_time) else 0.0
     
     return np.array([vx, vy, vz, a_vec[0], a_vec[1], a_vec[2], dm_dt])
 
@@ -137,6 +146,8 @@ zs = np.array(zs)
 speeds = np.array(speeds)
 ms = np.array(ms)
 
+if len(times) == 0:
+    raise RuntimeError("Simulation produced no data points")
 burn_idx = np.argmin(np.abs(times - burn_end_time))
 
 print("="*70)
@@ -148,9 +159,12 @@ print(f"  Height: {zs[burn_idx]/1000:.2f} km")
 print(f"  Velocity: {speeds[burn_idx]:.0f} m/s")
 print(f"  Mass: {ms[burn_idx]:.0f} kg")
 print(f"\nMaximum values:")
-print(f"  Max height: {np.max(zs)/1000:.2f} km (at ~{times[np.argmax(zs)]:.0f}s)")
-print(f"  Max velocity: {np.max(speeds):.0f} m/s")
-print(f"  Max range (horizontal): {np.sqrt(np.max(xs)**2 + np.max(ys)**2)/1000:.2f} km")
+if len(zs) > 0:
+    print(f"  Max height: {np.max(zs)/1000:.2f} km (at ~{times[np.argmax(zs)]:.0f}s)")
+if len(speeds) > 0:
+    print(f"  Max velocity: {np.max(speeds):.0f} m/s")
+if len(xs) > 0 and len(ys) > 0:
+    print(f"  Max range (horizontal): {np.sqrt(np.max(xs)**2 + np.max(ys)**2)/1000:.2f} km")
 print("="*70)
 
 fig = plt.figure(figsize=(16, 10))
@@ -217,6 +231,8 @@ plt.show()
 
 print("\nCreating interactive 3D visualization...")
 
+if len(xs) == 0 or len(zs) == 0:
+    raise RuntimeError("Cannot create visualization: no trajectory data")
 max_x = np.max(np.abs(xs)) if len(xs) > 0 else 5
 max_z = np.max(np.abs(zs)) if len(zs) > 0 else 5
 max_range = max(max_x, max_z, 5) / 1000

@@ -14,7 +14,13 @@ thrust = 1.2e6
 pitch_angle_deg = 85.0
 pitch_angle_rad = np.deg2rad(pitch_angle_deg)
 
+if Isp <= 0:
+    raise ValueError("Isp must be positive")
+if thrust <= 0:
+    raise ValueError("Thrust must be positive")
 mass_flow_rate = thrust / (Isp * g0)
+if mass_flow_rate <= 0:
+    raise ValueError("Mass flow rate must be positive")
 burn_time = prop_mass / mass_flow_rate
 
 total_mass = dry_mass + prop_mass
@@ -46,6 +52,9 @@ def derivatives(state, t):
     if m < dry_mass:
         m = dry_mass
     
+    if m <= 0:
+        raise RuntimeError(f"Mass became non-positive: m={m}")
+    
     v_vec = np.array([vx, vy])
     v = np.linalg.norm(v_vec)
     
@@ -64,7 +73,7 @@ def derivatives(state, t):
         D_vec = np.array([0.0, 0.0])
     
     a_vec = (T_vec + D_vec) / m + np.array([0.0, -g0])
-    dm_dt = -thrust_mag / (Isp * g0) if prop_remaining > 0.01 and t < burn_time else 0.0
+    dm_dt = -thrust_mag / (Isp * g0) if (Isp > 0 and prop_remaining > 0.01 and t < burn_time) else 0.0
     
     return np.array([vx, vy, a_vec[0], a_vec[1], dm_dt])
 
@@ -114,6 +123,8 @@ vys = np.array(vys)
 speeds = np.sqrt(vxs**2 + vys**2)
 ms = np.array(ms)
 
+if len(times) == 0:
+    raise RuntimeError("Simulation produced no data points")
 burn_idx = np.argmin(np.abs(times - burn_end_time))
 height_at_burn_end = ys[burn_idx]
 velocity_at_burn_end = speeds[burn_idx]
@@ -127,8 +138,10 @@ print(f"  Height: {height_at_burn_end/1000:.2f} km")
 print(f"  Velocity: {velocity_at_burn_end:.0f} m/s ({velocity_at_burn_end*3.6:.0f} km/h)")
 print(f"  Mass: {mass_at_burn_end:.0f} kg")
 print(f"\nMaximum values:")
-print(f"  Max height: {np.max(ys)/1000:.2f} km (at ~{times[np.argmax(ys)]:.0f}s)")
-print(f"  Max velocity: {np.max(speeds):.0f} m/s ({np.max(speeds)*3.6:.0f} km/h)")
+if len(ys) > 0:
+    print(f"  Max height: {np.max(ys)/1000:.2f} km (at ~{times[np.argmax(ys)]:.0f}s)")
+if len(speeds) > 0:
+    print(f"  Max velocity: {np.max(speeds):.0f} m/s ({np.max(speeds)*3.6:.0f} km/h)")
 print("="*60)
 
 fig, axes = plt.subplots(2, 2, figsize=(14, 10))
