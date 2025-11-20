@@ -23,7 +23,8 @@ pitch_deg_stage = [90.0, 85.0, 80.0]
 yaw_deg = 0.0
 
 cumulative_times = [0.0]
-for stage in stages:
+stage_min_masses = []
+for i, stage in enumerate(stages):
     if stage['Isp'] <= 0:
         raise ValueError(f"Isp must be positive for {stage['name']}")
     if stage['thrust'] <= 0:
@@ -34,39 +35,46 @@ for stage in stages:
     stage['burn_time'] = stage['prop_mass'] / mass_flow_rate
     stage['mass_flow_rate'] = mass_flow_rate
     cumulative_times.append(cumulative_times[-1] + stage['burn_time'])
+    min_mass = payload_mass + sum([stages[j]['dry_mass'] for j in range(i, len(stages))])
+    stage_min_masses.append(min_mass)
 
 stage_masses_after = []
-for i in range(len(stages)):
-    remaining = payload_mass + sum([stages[j]['dry_mass'] + stages[j]['prop_mass'] 
-                                    for j in range(i+1, len(stages))])
-    stage_masses_after.append(remaining)
+remaining = payload_mass
+for i in range(len(stages) - 1, -1, -1):
+    remaining += stages[i]['dry_mass'] + stages[i]['prop_mass']
+    stage_masses_after.insert(0, remaining)
 
 dt = 0.05
 t_max = 300.0
 num_steps = int(t_max / dt) + 1
 
-def gravitational_acceleration(y):
-    if y < 0:
-        y = 0.0
-    return g0 * (R_earth / (R_earth + y))**2
+def gravitational_acceleration(h):
+    if h < 0:
+        h = 0.0
+    return g0 * (R_earth / (R_earth + h))**2
 
-def wind_velocity(y):
-    if y < 0:
-        y = 0.0
+def wind_velocity(h):
+    if h < 0:
+        h = 0.0
     
     jetstream_height = 10000.0
     jetstream_max = 120.0
     
-    if y < 8000:
-        wind_speed = jetstream_max * 0.3 * (y / 8000)
-    elif y < 12000:
-        wind_speed = jetstream_max * (0.3 + 0.7 * (y - 8000) / 4000)
-    elif y < 20000:
-        wind_speed = jetstream_max * np.exp(-(y - 12000) / 8000)
+    if h < 8000:
+        wind_speed = jetstream_max * 0.3 * (h / 8000)
+    elif h < 12000:
+        wind_speed = jetstream_max * (0.3 + 0.7 * (h - 8000) / 4000)
+    elif h < 20000:
+        wind_speed = jetstream_max * np.exp(-(h - 12000) / 8000)
     else:
         wind_speed = 5.0
     
     return np.array([wind_speed, 0.0, 0.0])
+
+_ISA_T_h32 = 216.65 + 0.001 * 12000
+_ISA_p_h20_at_32 = p0 * (216.65 / T0)**5.256 * np.exp(-9000 / 6341.62)
+_ISA_p_h32 = _ISA_p_h20_at_32 * (_ISA_T_h32 / 216.65)**(-g0 / (0.001 * R_gas))
+_ISA_p_h47 = _ISA_p_h32 * np.exp(-15000 / 7000)
 
 def ISA_atmosphere(h):
     if h < 0:
@@ -88,17 +96,10 @@ def ISA_atmosphere(h):
         p = p_h20 * (T / 216.65)**(-g0 / (0.001 * R_gas))
     elif h < 47000:
         T = 228.65
-        T_h32 = 216.65 + 0.001 * 12000
-        p_h20_at_32 = p0 * (216.65 / T0)**5.256 * np.exp(-9000 / 6341.62)
-        p_h32 = p_h20_at_32 * (T_h32 / 216.65)**(-g0 / (0.001 * R_gas))
-        p = p_h32 * np.exp(-(h - 32000) / 7000)
+        p = _ISA_p_h32 * np.exp(-(h - 32000) / 7000)
     else:
         T = 228.65 + 0.0028 * (h - 47000)
-        T_h32 = 216.65 + 0.001 * 12000
-        p_h20_at_32 = p0 * (216.65 / T0)**5.256 * np.exp(-9000 / 6341.62)
-        p_h32 = p_h20_at_32 * (T_h32 / 216.65)**(-g0 / (0.001 * R_gas))
-        p_h47 = p_h32 * np.exp(-15000 / 7000)
-        p = p_h47 * np.exp(-(h - 47000) / 6000)
+        p = _ISA_p_h47 * np.exp(-(h - 47000) / 6000)
     
     rho = p / (R_gas * T)
     return max(rho, 1e-10), T, p
@@ -118,7 +119,7 @@ def derivatives(state, t, dt_step):
     
     stage_idx, time_in_stage = get_current_stage(t)
     stage = stages[stage_idx]
-    min_mass = payload_mass + sum([stages[j]['dry_mass'] for j in range(stage_idx, len(stages))])
+    min_mass = stage_min_masses[stage_idx]
     
     if m < min_mass:
         m = min_mass
@@ -126,7 +127,7 @@ def derivatives(state, t, dt_step):
     if m <= 0:
         raise RuntimeError(f"Mass became non-positive: m={m} at t={t:.2f}s, stage={stage_idx}")
     
-    v_vec = np.array([vx, vy, vz])
+    v_vec = state[3:6]
     v = np.linalg.norm(v_vec)
     
     thrust_mag = 0.0
@@ -150,7 +151,7 @@ def derivatives(state, t, dt_step):
         drag_mag = 0.5 * rho * stage['Cd'] * stage['A'] * v_rel_mag**2
         D_vec = -drag_mag * (v_rel / v_rel_mag)
     else:
-        D_vec = np.array([0.0, 0.0, 0.0])
+        D_vec = np.zeros(3)
     
     g = gravitational_acceleration(z)
     a_vec = (T_vec + D_vec) / m + np.array([0.0, 0.0, -g])
@@ -199,46 +200,61 @@ print("="*80)
 t = 0.0
 state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, total_mass])
 
-times, xs, ys, zs = [], [], [], []
-vxs, vys, vzs = [], [], []
-ms, speeds = [], []
-stage_info = []
-gs, winds, densities = [], [], []
+times = np.zeros(num_steps)
+xs = np.zeros(num_steps)
+ys = np.zeros(num_steps)
+zs = np.zeros(num_steps)
+vxs = np.zeros(num_steps)
+vys = np.zeros(num_steps)
+vzs = np.zeros(num_steps)
+ms = np.zeros(num_steps)
+speeds = np.zeros(num_steps)
+stage_info = np.zeros(num_steps, dtype=int)
+gs = np.zeros(num_steps)
+winds = np.zeros(num_steps)
+densities = np.zeros(num_steps)
 
 print("\nSimulation running...")
 
+next_separation_idx = 0
+actual_steps = num_steps
+
 for step in range(num_steps):
-    times.append(t)
-    xs.append(state[0])
-    ys.append(state[1])
-    zs.append(state[2])
-    vxs.append(state[3])
-    vys.append(state[4])
-    vzs.append(state[5])
-    ms.append(state[6])
+    times[step] = t
+    xs[step] = state[0]
+    ys[step] = state[1]
+    zs[step] = state[2]
+    vxs[step] = state[3]
+    vys[step] = state[4]
+    vzs[step] = state[5]
+    ms[step] = state[6]
     
-    v = np.linalg.norm([state[3], state[4], state[5]])
-    speeds.append(v)
+    v_vec = state[3:6]
+    v = np.linalg.norm(v_vec)
+    speeds[step] = v
     
-    gs.append(gravitational_acceleration(state[2]))
+    gs[step] = gravitational_acceleration(state[2])
     wind_vec = wind_velocity(state[2])
-    winds.append(np.linalg.norm(wind_vec))
-    densities.append(air_density(state[2]))
+    winds[step] = np.linalg.norm(wind_vec)
+    densities[step] = air_density(state[2])
     
     stage_idx, _ = get_current_stage(t)
-    stage_info.append(stage_idx)
+    stage_info[step] = stage_idx
     
-    if step > 0:
-        for i in range(len(stages) - 1):
-            separation_time = cumulative_times[i+1]
-            if separation_time - dt/2 <= t < separation_time + dt/2:
-                if state[6] > stage_masses_after[i]:
-                    state[6] = stage_masses_after[i]
-                    print(f"  STAGE {i+1} SEPARATED at t={t:.2f}s, Height={state[2]/1000:.2f}km")
-                    print(f"    New mass: {state[6]:.0f} kg, Stage {i+2} activated")
+    if next_separation_idx < len(stages) - 1:
+        separation_time = cumulative_times[next_separation_idx + 1]
+        if separation_time - dt/2 <= t < separation_time + dt/2:
+            if state[6] > stage_masses_after[next_separation_idx]:
+                state[6] = stage_masses_after[next_separation_idx]
+                print(f"  STAGE {next_separation_idx+1} SEPARATED at t={t:.2f}s, Height={state[2]/1000:.2f}km")
+                print(f"    New mass: {state[6]:.0f} kg, Stage {next_separation_idx+2} activated")
+            next_separation_idx += 1
+        elif t >= separation_time + dt/2:
+            next_separation_idx += 1
     
-    if step > 100 and state[2] < 0:
+    if state[2] < 0:
         print(f"  Ground contact at t={t:.1f}s")
+        actual_steps = step + 1
         break
     
     state = rk4_step(state, t, dt)
@@ -250,16 +266,19 @@ for step in range(num_steps):
 
 print("\nSimulation complete!")
 
-times = np.array(times)
-xs = np.array(xs)
-ys = np.array(ys)
-zs = np.array(zs)
-speeds = np.array(speeds)
-ms = np.array(ms)
-stage_info = np.array(stage_info)
-gs = np.array(gs)
-winds = np.array(winds)
-densities = np.array(densities)
+times = times[:actual_steps]
+xs = xs[:actual_steps]
+ys = ys[:actual_steps]
+zs = zs[:actual_steps]
+vxs = vxs[:actual_steps]
+vys = vys[:actual_steps]
+vzs = vzs[:actual_steps]
+speeds = speeds[:actual_steps]
+ms = ms[:actual_steps]
+stage_info = stage_info[:actual_steps]
+gs = gs[:actual_steps]
+winds = winds[:actual_steps]
+densities = densities[:actual_steps]
 
 print("\n" + "="*80)
 print("RESULTS")
@@ -402,12 +421,9 @@ ax10.set_title('Trajectory (X-Z Plane)')
 ax10.grid(True, alpha=0.3)
 
 ax11 = fig.add_subplot(3, 4, 11)
-vxs_arr = np.array(vxs)
-vys_arr = np.array(vys)
-vzs_arr = np.array(vzs)
-ax11.plot(times, vxs_arr, 'r-', linewidth=1.5, label='vx')
-ax11.plot(times, vys_arr, 'b-', linewidth=1.5, label='vy')
-ax11.plot(times, vzs_arr, 'g-', linewidth=1.5, label='vz')
+ax11.plot(times, vxs, 'r-', linewidth=1.5, label='vx')
+ax11.plot(times, vys, 'b-', linewidth=1.5, label='vy')
+ax11.plot(times, vzs, 'g-', linewidth=1.5, label='vz')
 ax11.set_xlabel('Time (s)')
 ax11.set_ylabel('Velocity (m/s)')
 ax11.set_title('Velocity Components')
@@ -415,7 +431,7 @@ ax11.legend()
 ax11.grid(True, alpha=0.3)
 
 ax12 = fig.add_subplot(3, 4, 12)
-potential_energy = ms * gs * zs / 1e9
+potential_energy = ms * g0 * zs / 1e9
 kinetic_energy = 0.5 * ms * speeds**2 / 1e9
 total_energy = potential_energy + kinetic_energy
 ax12.plot(times, potential_energy, 'g-', linewidth=1.5, label='Potential')
